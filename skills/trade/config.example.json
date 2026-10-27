@@ -1,0 +1,42 @@
+{
+  "account_number": "YOUR_ACCOUNT_NUMBER",
+  "universe_indexes": [
+    "SP100",
+    "NDX"
+  ],
+  "regime_symbol": "SPY",
+  "regime_band": 0.03,
+  "max_positions": 5,
+  "hold_rank_buffer": 10,
+  "risk_per_trade": 0.02,
+  "stop_atr_mult": 2.5,
+  "max_position_pct": 0.2,
+  "max_gross_pct": 0.95,
+  "min_position_usd": 200,
+  "earnings_blackout_days": 7,
+  "max_orders_per_run": 10,
+  "daily_loss_halt_pct": 0.02,
+  "drawdown_kill_pct": 0.1,
+  "exclude": [
+    "GOOG"
+  ],
+  "crypto": {
+    "symbols": [
+      "IBIT",
+      "ETHA"
+    ],
+    "max_total_pct": 0.2,
+    "max_each_pct": 0.1
+  },
+  "data_guard": {
+    "max_price_to_sma": 2.0,
+    "min_price_to_sma": 0.5,
+    "max_mom12": 3.0
+  },
+  "resize": {
+    "enabled": true,
+    "trim": true,
+    "min_drift": 0.25,
+    "min_trade_usd": 200
+  }
+}

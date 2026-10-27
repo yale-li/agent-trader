@@ -1,0 +1,13 @@
+# Live account data — keep private
+data/
+config.json
+journal/
+reports/
+run/
+state/
+
+# Local Claude Code setup (project link to skills/trade, runtime files)
+.claude/
+
+.DS_Store
+__pycache__/
