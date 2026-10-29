@@ -1,6 +1,6 @@
 ---
 name: trade
-description: Run the agent-trader momentum strategy on a Robinhood account through the Robinhood MCP. "/trade setup" = first-time install check and data dir; "/trade" or "/trade rebalance" = weekly rebalance (live orders); "/trade check" = daily risk check (stops, halts, no new buys). Use when the user asks to set up or install agent-trader, run the strategy, rebalance, or check positions/stops.
+description: Run the agent-trader momentum strategy on a Robinhood account through the Robinhood MCP. "/trade setup" = first-time install check and data dir; "/trade" or "/trade rebalance" = weekly rebalance (live orders); "/trade check" = daily risk check (stops, halts; buys only to fill empty slots). Use when the user asks to set up or install agent-trader, run the strategy, rebalance, or check positions/stops.
 ---
 
 # Trade agent runbook
@@ -88,7 +88,12 @@ Places no orders and may run at any hour.
 4. Report the data dir, the account, and that the next step is `/trade check` during market hours.
 
 ## `/trade check` (daily)
-Steps 1–3 plus the step 6 audit. Execute **only** stop repairs/raises and sells caused by a halt or risk-off regime; never BUY, ADD or TRIM (those wait for the weekly rebalance). Report.
+Steps 1–3 plus the step 6 audit. Execute stop repairs/raises and sells caused by a halt or risk-off regime. Never ADD or TRIM, and never make a rank-drop SELL (those wait for the weekly rebalance).
+**Slot fill:** if the plan has BUY orders, execute them only to fill empty slots, with the step 4 news overlay and the step 5 BUY procedure:
+- empty stock slots = `max_positions` − stock positions held after this run's sells (crypto ETFs don't count); take stock BUYs in rank order up to that number. A crypto-sleeve BUY counts as a fill when that ETF is not held.
+- each BUY must fit in the actual cash (the plan's budget may count sells or trims this run doesn't make); skip it if not.
+- the engine's gates still apply (halt, daily-loss limit, risk-off, earnings blackout): if it emits no BUY, buy nothing.
+Report.
 
 ## Halt / kill switch
 - `halted: true` (set automatically by the drawdown breaker) blocks buys until the user resets it.

@@ -33,7 +33,7 @@ Then run `/trade setup`. It asks for your Agentic account number and creates `co
 | Command | When | Does |
 |---|---|---|
 | `/trade setup` | first time, or when something looks off | checks the install; places no orders |
-| `/trade check` | daily, market hours | raises/repairs stops; sells only on a halt or risk-off market; never buys |
+| `/trade check` | daily, market hours | raises/repairs stops; sells only on a halt or risk-off market; buys only to fill empty slots |
 | `/trade` | weekly, market hours, after 10:00 ET | full rebalance: sells, trims, stops, buys, adds |
 
 `/trade <mode>` means "run the trade skill with that mode". In an agent without slash commands, just ask, e.g. "run the trade skill: check".
