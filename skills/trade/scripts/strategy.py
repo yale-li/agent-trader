@@ -14,6 +14,9 @@ input.json shape:
   "prev_close_equity": 5000.0, # equity at the previous close (for the daily-loss halt)
   "spy": {"price": 0, "sma200": 0},
   "universe": [{"symbol","price","sma200","mom12","mom6","atr","earnings_ymd"}],  # all rows of config universe_indexes (SP100 + NDX), not only those above the 200DMA
+                                 # earnings_ymd comes from earnings.py (Robinhood earnings calendar), not the scanner
+  "earnings_source": {"source", "through": "YYYY-MM-DD", ...},  # written by earnings.py; without it, or if it
+                                 # ends before date + earnings_blackout_days, the engine makes no stock BUYs/ADDs
                                  # a row may carry "verified": true once re-checked with split-adjusted data
   "crypto": [{"symbol","price","sma200","mom12","mom6","atr"}],  # IBIT/ETHA from get_equity_technical_indicators
                                  # + split-adjusted historicals, NOT the scanner (its history is not split-adjusted)
@@ -70,6 +73,17 @@ def days_until(ymd, today):
     except ValueError:
         return None
     return (d - today).days
+
+
+def earnings_gap(inp, today, cfg):
+    """Why the earnings blackout can't be trusted for this input, or None if the calendar covers it."""
+    src = inp.get("earnings_source")
+    if not src or not src.get("through"):
+        return "no earnings calendar in input (run earnings.py)"
+    through = date.fromisoformat(src["through"])
+    if (through - today).days < cfg["earnings_blackout_days"]:
+        return f"earnings calendar only covers through {through}, blackout needs {cfg['earnings_blackout_days']}d"
+    return None
 
 
 def score(row):
@@ -133,6 +147,9 @@ def plan(inp, cfg=CONFIG, state=None):
     if daily_loss >= cfg["daily_loss_halt_pct"]:
         no_buys = True
         notes.append(f"Daily loss {daily_loss:.1%} >= limit: no new buys today.")
+    earnings_missing = earnings_gap(inp, today, cfg)
+    if earnings_missing:
+        notes.append(f"EARNINGS DATA MISSING: {earnings_missing}. No stock buys/adds (crypto sleeve unaffected).")
 
     # --- regime -----------------------------------------------------------
     spy = inp["spy"]
@@ -269,7 +286,7 @@ def plan(inp, cfg=CONFIG, state=None):
                                      + (f", shrunk x{shrink}" if shrink < 1 else "")})
 
     candidates = []
-    if risk_on and not no_buys and slots > 0:
+    if risk_on and not no_buys and not earnings_missing and slots > 0:
         for r in ranked:
             if len(candidates) >= slots:
                 break
@@ -313,6 +330,8 @@ def plan(inp, cfg=CONFIG, state=None):
                     continue
             else:
                 if not risk_on or suspicious(r) or rank_of.get(sym, 999) > rz.get("add_max_rank", cfg["hold_rank_buffer"]):
+                    continue
+                if earnings_missing:
                     continue
                 dte = days_until(r.get("earnings_ymd"), today)
                 if dte is not None and 0 <= dte <= cfg["earnings_blackout_days"]:

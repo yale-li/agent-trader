@@ -32,7 +32,6 @@ On the first live run (empty `journal/trades.jsonl`), show the order table and w
 | Mom 12-1 | `close(candleCount=21, candlePeriod="1d", session="regular") / close(candleCount=252, candlePeriod="1d", session="regular") - 1` |
 | Mom 6-1 | `close(candleCount=21, candlePeriod="1d", session="regular") / close(candleCount=126, candlePeriod="1d", session="regular") - 1` |
 | ATR14 | `atr(candleCount=14, candlePeriod="1d")` |
-| Earnings | `fundamental.earningsYmd` |
 
 Second `preview_scan`: `symbol ANY_OF ["SPY"]` with the SMA200 column (regime check).
 Use the `Last` column as price. If a held symbol is missing, scan it with `symbol ANY_OF`.
@@ -47,11 +46,14 @@ Use the `Last` column as price. If a held symbol is missing, scan it with `symbo
 - `roc` period 231, output `last:22` → **first** value ÷ 100 = mom12
 Price = scanner `Last` or `get_equity_quotes`. Put them in input.json `crypto`.
 
+### 2b'. Earnings dates — never from the scanner
+The scanner's `fundamental.earningsYmd` comes back empty for every row, which silently disabled the earnings blackout until 2026-11-04. Instead call `get_earnings_calendar(start_date=<today>, days=14, filter="high_market_cap")` once and save the full response as `run/<date>/earnings.json` (if the tool spills it to a file, copy that file). After writing input.json in step 3, run `python3 <skill>/scripts/earnings.py run/<date>/input.json run/<date>/earnings.json`. It sets each row's `earnings_ymd` to the next report date and adds `earnings_source`. Without `earnings_source` the engine makes no stock BUYs or ADDs. If the calendar call fails, don't fake it: run anyway, and the engine skips stock buys.
+
 ### 2c. Verify flagged stocks
 The engine excludes rows that look like split artifacts (price/SMA200 outside 0.5–2, or mom12 > 300%). For any such row that would otherwise rank in the top 10 or is held, fetch the same four indicators as 2b, replace the row's values, set `"verified": true`, and re-run.
 
 ## 3. Run the engine
-Write `run/<YYYY-MM-DD>/input.json` (schema in the `strategy.py` docstring; every universe row, numbers as floats; earnings_ymd as an 8-digit string), then:
+Write `run/<YYYY-MM-DD>/input.json` (schema in the `strategy.py` docstring; every universe row, numbers as floats), fill earnings dates (2b'), then:
 `python3 <skill>/scripts/strategy.py plan run/<date>/input.json` → writes `plan.json`.
 
 ## 4. News overlay (BUY and ADD candidates only)
