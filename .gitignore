@@ -5,6 +5,7 @@ journal/
 reports/
 run/
 state/
+backtest/
 
 # Local Claude Code setup (project link to skills/trade, runtime files)
 .claude/

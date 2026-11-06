@@ -362,7 +362,107 @@ Monthly:
 4. **补一个绕过 LLM 的紧急停机开关**（SoK 的建议），例如在 `state/state.json` 中加 `kill: true`，引擎读到后直接停止所有买单。目前的回撤熔断已经部分覆盖这一点。**（已实现：`strategy.py kill` / `unkill`，开启后引擎不发出任何订单。）**
 5. **止损后再入场**：保持现状；如果观察到反复止损，再加"4 周内两次止损就跳过一期"的规则。
 
+## 10. 有没有更好的策略？（2026-11-06）
+
+背景：本仓库的个股动量策略回测（`backtest.py`，2016-01 至 2026-11）年化 14.8%–23.4%，具体取决于调仓日；最大回撤 28–39%；同期 SPY 15.0%、QQQ 19.4%。这个结果还受幸存者偏差影响，偏乐观，所以要换一个角度找对照。
+
+### 10.1 外部证据（按强度排序）
+| 结论 | 证据 |
+|---|---|
+| 主动选股多数跑不赢指数 | SPIVA：2025 年 79% 的美国大盘主动基金跑输 S&P 500；15 年期没有任何类别多数跑赢 |
+| 交易越多、收益越差 | Barber & Odean：台湾个人投资者整体每年落后约 3.8 个百分点；能持续盈利的日内交易者不到 1% |
+| 投资者行为本身吃掉收益 | Morningstar *Mind the Gap 2025*：申赎时机导致投资者每年少赚约 1.2 个百分点 |
+| 因子公开后收益减半 | McLean & Pontiff：发表后收益下降约 58%，但没有归零；动量仍在但会崩盘；质量因子最耐久（2026 预印本） |
+| 趋势跟随主要防长熊市 | 在 2008、2022 这类持续下跌中有效；短促回调中好坏参半（Kaminski & Zhao） |
+| 风险平价依赖股债负相关 | 2022 年股债同跌，All Weather 约 −22% |
+| 税收是确定的收益来源 | 税损收割（Chaudhuri, Burnham & Lo 2020）：约 +1%/年，偏乐观；短线交易则把收益变成按普通税率计税的短期利得 |
+
+### 10.2 ETF 策略回测（`research/etf_strategies.py`）
+- **设置**：2006-12 至 2026-11，月度调仓，含分红，5bp 成本。
+- **没有幸存者偏差**：标的是 ETF 本身。
+- **注意**：月度数据会低估回撤；Sharpe 按 rf=0 计算。
+
+> **更正（2026-11-06）**：第一版用的是 Yahoo `range=max` 返回的月度 K 线。分红日期和 K 线日期对不上，大部分分红被漏算。下表已改用日度数据重算。改动最大的是 SPY 10 月均线趋势：Sharpe 0.90→0.87，回撤 18%→25%，2022 −17%→−23%。原因是 2022 年 SPY 在均线上下 2% 内反复穿越，1% 的价格差异就能翻转信号。
+
+| 策略 | 年化 | 波动 | 最大回撤 | Sharpe | 2008 | 2022 | 换仓/年 |
+|---|---|---|---|---|---|---|---|
+| SPY 持有 | 10.6% | 15.3% | 50.8% | 0.74 | −37% | −18% | 0 |
+| QQQ 持有 | 15.6% | 18.7% | 49.7% | 0.87 | −42% | −33% | 0 |
+| 60/40 SPY/IEF | 7.9% | 9.4% | 29.5% | 0.87 | −18% | −17% | 0 |
+| 永久组合（4×25%） | 6.7% | 7.5% | 17.3% | **0.91** | +0% | −14% | 0 |
+| All Weather（零售版） | 6.3% | 8.3% | 21.6% | 0.78 | −0% | −19% | 0 |
+| SPY 10 月均线趋势 | 8.9% | 10.5% | 24.7% | 0.87 | +7% | −23% | 1.6 |
+| GTAA5（Faber） | 5.4% | 6.4% | 10.0% | 0.86 | +6% | −7% | 6.7 |
+| GEM 双动量 | 7.1% | 12.2% | 25.4% | 0.62 | +8% | −23% | 2.1 |
+| 2× SPY 持有（SSO） | 14.2% | 31.2% | 81.4% | 0.59 | −68% | −39% | 0 |
+| 2× SPY + 10 月均线 | 13.6% | 21.2% | 43.7% | 0.71 | +7% | −41% | 1.6 |
+
+2016–2026 同窗口：SPY 14.3%（回撤 23.9%），QQQ 18.5%，SPY 趋势 8.6%（回撤 24.7%），2× SPY 趋势 12.4%（回撤 43.7%）。
+
+### 10.3 结论
+1. **没有一个策略在收益和风险上同时更好。** 回撤越小，收益通常也越低。"更好"取决于目标：要最大化长期收益，还是要能扛得住的回撤。
+2. **证据最强的是低成本指数长期持有。** 难点在于能不能熬过 −50%：如果 2008 年中途卖出，实际收益会远低于表中数字。
+3. **指数趋势跟随是控制回撤的工具，不提高收益**（详见 10.4 的日度回测）。
+   - 它把 SPY 的最大回撤从 55% 降到约 23%，每年换仓约 1 次。
+   - 收益是否吃亏，取决于样本里有没有长熊市：2000–2026 打平，2006–2026 每年少约 1.5 个百分点，2016–2026 少约 4.6 个百分点。
+   - 它适合交给 agent：规则简单、容易核对、换手低、没有个股和财报风险。
+4. **股债组合和永久组合**以更低收益换来更平稳的曲线。修正分红后，永久组合 Sharpe 最高（0.91）。2022 年证明股债同跌也会发生。
+5. **杠杆 + 趋势**是长样本里唯一兼顾"收益高于 SPY、回撤低于 SPY"的方案（10.4）。但它依赖趋势市；放在 QQQ 上，互联网泡沫期仍会回撤 −75%。
+6. **对本项目的含义**：个股动量相对指数没有显示出稳定优势。更值得做的方向：
+   - 把 agent 的规则化执行用在指数级策略上（趋势跟随、定期再平衡）；
+   - 如果是应税账户，把税损收割作为确定收益；
+   - 个股动量缩小为试验性的小仓位，或者先模拟盘运行。
+
+### 10.4 指数趋势跟随：日度回测（`research/trend_daily.py`）
+**设置**
+- 收盘出信号，按当天收盘价成交，5bp 成本；含分红。
+- 现金用 SHY；2002 年 SHY 上市前用当年 T-bill 利率。
+- 回撤按日计算。
+- 2006 年前的 2× 用合成基金：2× 日收益 − 1× 现金 − 0.95%/年费用。和真实 SSO/QLD 对比，年化误差不到 0.2 个百分点（15.7% vs 15.5%，24.8% vs 24.6%）。
+
+**2000-01 至 2026-11，包含互联网泡沫和 2008**
+
+| 策略 | 年化 | 最大回撤 | Sharpe | 最长水下 | 2000–02 | 2008 | 2020 | 2022 |
+|---|---|---|---|---|---|---|---|---|
+| SPY 持有 | 8.3% | 55.2% | 0.51 | 6.6 年 | −48% | −55% | −34% | −19% |
+| **SPY 200 日线 ±3%** | 8.7% | 22.7% | **0.78** | 3.1 年 | −2% | −2% | −19% | −19% |
+| SPY 10 月均线（月度） | 8.6% | 27.2% | 0.74 | 3.2 年 | −5% | −1% | −12% | −24% |
+| 2× SPY 持有 | 9.4% | 88.9% | 0.43 | 14.7 年 | −79% | −85% | −60% | −36% |
+| **2× SPY 200 日线 ±3%** | **13.4%** | 41.9% | 0.66 | 3.2 年 | −15% | −12% | −37% | −32% |
+| QQQ 持有 | 8.4% | 83.0% | 0.44 | 14.9 年 | −83% | −52% | −28% | −33% |
+| QQQ 200 日线 ±3% | 9.2% | 44.8% | 0.60 | 7.5 年 | −43% | −16% | −25% | −16% |
+| 2× QQQ 200 日线 ±3% | 12.6% | 75.4% | 0.52 | 13.6 年 | −75% | −36% | −47% | −26% |
+
+**2016–2026，与个股动量同窗口**（个股动量含幸存者偏差）
+
+| 策略 | 年化 | 最大回撤 | Sharpe |
+|---|---|---|---|
+| 个股动量（5 个调仓日） | 14.8%–23.4% | 28.5%–38.8% | 0.76–1.09 |
+| SPY 持有 | 15.0% | 33.7% | 0.88 |
+| SPY 200 日线 ±3% | 10.4% | 22.7% | 0.87 |
+| QQQ 持有 | 19.4% | 35.1% | 0.91 |
+| QQQ 200 日线 ±3% | 15.3% | 27.3% | 0.93 |
+| 2× SPY 200 日线 ±3% | 16.2% | 40.6% | 0.74 |
+| 2× QQQ 200 日线 ±3% | 25.3% | 49.4% | 0.84 |
+
+**参数敏感性**（2000–2026，SPY）
+- 去掉缓冲带后反复被打脸：200 日线 ±0% 年化只有 6.2%、每年换仓 7 次；100 日线 ±0% 只有 3.9%。
+- ±3% 缓冲带下，150、200、250 日线的结果相近（8.3%–8.7%）。
+- 结论：**缓冲带比均线长度更重要**。QQQ 对参数更敏感：150 日线的回撤高达 59%–73%。
+
+**结论**
+1. **趋势跟随防的是慢熊，不防急跌。**
+   - 2000–02 和 2008 都几乎全身而退（−2%），2022 年则和持有一样跌 19%。
+   - 2020 年的 V 形急跌，SPY 版只少跌一些（−19% vs −34%），QQQ 版少得更少（−25% vs −28%）。
+2. **在 SPY 上效果最好，QQQ 上较弱。** QQQ 版在互联网泡沫中仍跌 43%，2× QQQ 版跌 75%。
+3. **2× SPY + 200 日线 ±3% 是长样本里唯一年化明显高于 SPY（13.4% vs 8.3%）、回撤又更低（42% vs 55%）的方案。**
+   - 但它在 2020 年仍跌 37%。
+   - 只有大约 1.5 次长熊市撑起了这个优势，样本太少，统计上不可靠。
+4. **对比个股动量**：在 2016–2026 这个无长熊的窗口，趋势版每年少赚，个股动量（带偏差）不输它们。所以趋势跟随不是"更好的收益"，它是用牛市里的收益去买熊市保险。
+5. **如果要交给 agent 做**，最稳健的形式是"指数 200 日线 ±3%，每天收盘检查"：每年约 1 次交易，数据无偏差，容易核对。是否加杠杆，取决于能不能接受 40% 的回撤。
+
 ## Sources
+- 2026-11-06 补充：[SPIVA U.S. Year-End 2025](https://www.spglobal.com/spdji/en/spiva/article/spiva-us-year-end-2025/)，[InvestmentNews: active managers 2025](https://www.investmentnews.com/equities/active-managers-stumble-again-in-2025-as-large-caps-dominate/265541)，[Barber, Lee, Liu & Odean, Just How Much Do Individual Investors Lose by Trading? (RFS 2009)](https://faculty.haas.berkeley.edu/odean/papers%20current%20versions/justhowmuchdoindividualinvestorslose_rfs_2009.pdf)，[Barber et al., Day trading skill](https://faculty.haas.berkeley.edu/odean/papers/day%20traders/Day%20Trading%20Skill%20110523.pdf)，[Morningstar Mind the Gap 2025](https://www.morningstar.com/business/insights/research/mind-the-gap-2025)，[McLean & Pontiff](https://www.fmg.ac.uk/sites/default/files/2020-08/Jeffrey-Pontiff.pdf)，[Quantpedia: strategies after publication](https://quantpedia.com/how-do-investment-strategies-perform-after-publication/)，[Strategy-decay risk (arXiv 2604.08356)](https://arxiv.org/pdf/2604.08356)，[Man Group: Gaining Momentum](https://www.man.com/maninstitute/gaining-momentum-trend)，[Kaminski & Zhao, Crisis or Correction (2023)](https://www.alphasimplex.com/assets/files/2023.08---crisis-or-correction---kaminski-and-zhao.pdf)，[CAIA: risk parity 2022](https://caia.org/node/7312)，[ETF Central: risk parity in 2022](https://www.etfcentral.com/news/risk-parity-etfs-effective-2022)，[Alpha Architect: tax-loss harvesting](https://alphaarchitect.com/tax-loss-harvesting/)，[Morningstar: tax-loss harvesting](https://www.morningstar.com/financial-advisors/taking-tax-loss-harvesting-next-level)，[A Wealth of Common Sense: dual momentum](https://awealthofcommonsense.com/2015/07/my-thoughts-on-gary-antonaccis-dual-momentum/)
 - 2026-10-19 补充：[TradeRank 第 9 季结果](https://www.traderank.ai/blog/season-9-final-results)，[TradeRank 九季研究](https://www.traderank.ai/blog/nine-seasons-llm-paper-trading)，[ClawStreet agentic trading 实时结果](https://www.clawstreet.io/agentic-trading)，[KTD-Fin (arXiv 2605.28359)](https://arxiv.org/abs/2605.28359)，[CLQT (arXiv 2606.29771)](https://arxiv.org/abs/2606.29771)，[LiveMACE (arXiv 2610.09872)](https://arxiv.org/abs/2610.09872)，[SoK: Trading Agents or Market Crashers? (arXiv 2609.19705)](https://arxiv.org/abs/2609.19705)，[Han, Zhou & Zhu, Taming Momentum Crashes (SSRN 2407199)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2407199)，[Kaminski & Lo, When Do Stop-Loss Rules Stop Losses? (SSRN 968338)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=968338)
 - [What LLM Trading Agents Actually Do in Production (arXiv 2609.05663)](https://arxiv.org/html/2609.05663v1)
 - [Agentic Quantitative Trading: A Survey (arXiv 2608.31041)](https://arxiv.org/html/2608.31041v1)
