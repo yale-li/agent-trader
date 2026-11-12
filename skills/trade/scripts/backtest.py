@@ -27,7 +27,8 @@ Rule variants (all go through the engine's own vetoes or config, strategy.py is 
   --max-corr X      veto a stock BUY whose 60-day return correlation with a held/new stock exceeds X
   --set k=v         override a config.json value (e.g. stop_atr_mult=3.5, max_positions=8)
   --halt-reset N    simulate a human resetting the drawdown halt N trading days after it trips
-                    (0 = never; the live halt waits for the user)
+                    (0 = never); ignored while config halt_release.enabled is true, because the
+                    engine then lifts the halt itself
 """
 import argparse
 import copy
@@ -196,8 +197,8 @@ def simulate(data, cfg, start, end=None, capital=10000.0, slippage_bps=5, rebala
 
         equity = value()
 
-        # simulated human review of the drawdown halt
-        if state.get("halted"):
+        # simulated human review of the drawdown halt (skipped when the engine's halt_release handles it)
+        if state.get("halted") and not cfg.get("halt_release", {}).get("enabled"):
             halted_on = halted_on if halted_on is not None else i
             if halt_reset and i - halted_on >= halt_reset:
                 halts.append({"tripped": dates[halted_on], "reset": d})
@@ -252,6 +253,8 @@ def simulate(data, cfg, start, end=None, capital=10000.0, slippage_bps=5, rebala
                 accepted.append(o["symbol"])
             if not added:
                 break
+        if new_state.get("released_on") == d and state.get("released_on") != d:
+            halts.append({"tripped": state.get("halted_on"), "reset": d, "auto": True})
         state = new_state
         if state.get("halted") and halted_on is None:
             halted_on = i

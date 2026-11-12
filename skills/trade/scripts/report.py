@@ -14,11 +14,12 @@ import html
 import json
 import sys
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import datadir
+from strategy import add_weekdays, cooldown_needed
 
 ROOT = datadir.resolve(sys.argv[sys.argv.index("--root") + 1] if "--root" in sys.argv else None)
 CONFIG = datadir.require_config(ROOT)
@@ -299,8 +300,20 @@ def build():
                         for o in reversed(ov)]))
 
     halted = state.get("halted")
-    status = (f'<div class="banner neg">⚠ 已熔断：{html.escape(state.get("halt_reason") or "")}。需手动解除。</div>'
+    hr = CONFIG.get("halt_release", {})
+    if halted and hr.get("enabled") and state.get("halted_on"):
+        need = cooldown_needed(state, hr)
+        earliest = add_weekdays(date.fromisoformat(state["halted_on"]), need)
+        release = (f"自 {state['halted_on']} 起，第 {state.get('halt_streak', 1)} 次熔断（距上次新高），"
+                   f"冷静期 {need} 个交易日，最早 {earliest} 且 SPY 在 200 日线上方时自动解除"
+                   f"{'（回撤超过下限时仍需手动）' if hr.get('max_drawdown_from_hwm') else ''}。")
+    else:
+        release = "需手动解除（python3 strategy.py unhalt）。"
+    status = (f'<div class="banner neg">⚠ 已熔断：{html.escape(state.get("halt_reason") or "")}。{html.escape(release)}</div>'
               if halted else "")
+    if not halted and state.get("probation_until") and today <= state["probation_until"]:
+        status += (f'<div class="banner">自动解除后观察期至 {state["probation_until"]}：'
+                   f'每笔风险 × {hr.get("probation_risk_mult", 0.5)}。</div>')
     if state.get("kill"):
         status += (f'<div class="banner neg">⛔ 紧急停机已开启：{html.escape(state.get("kill_reason") or "用户手动")}。'
                    f'引擎不会发出任何订单，券商端已挂的止损单不受影响。解除：python3 strategy.py unkill</div>')

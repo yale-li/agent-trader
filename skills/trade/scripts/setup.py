@@ -120,7 +120,10 @@ def doctor(root=None):
         if state.get("kill"):
             warnings.append(f"kill switch is ON ({state.get('kill_reason') or 'no reason'}): only the user clears it")
         if state.get("halted"):
-            warnings.append(f"buying is halted ({state.get('halt_reason')}): only the user resets it")
+            auto = (cfg or {}).get("halt_release", {}).get("enabled")
+            warnings.append(f"buying is halted ({state.get('halt_reason')}): "
+                            + ("the engine lifts it after the cooldown (halt_release), or the user runs strategy.py unhalt"
+                               if auto else "only the user resets it (strategy.py unhalt)"))
     git_warning = git_tracked_risk(root)
     if git_warning:
         warnings.append(git_warning)

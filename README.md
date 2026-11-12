@@ -48,7 +48,7 @@ The first live run shows the order table and waits for your go-ahead. To stop al
 - **Entries:** top-ranked names, up to 5 stocks. Each is sized so its stop costs 2% of equity, capped at 20% of equity, with no buys within 7 days of earnings.
 - **Exits:** a stock is sold when it falls below its 200-day average or out of the top 10. Every position has a 2.5×ATR trailing stop at the broker, and stops only move up.
 - **Resizing:** held positions are topped up to target size and trimmed when they outgrow their cap (`resize` in `config.json`).
-- **Safety:** no buys after a 2% daily loss or a 10% drawdown (the drawdown halt stays until you reset it), and a kill switch you control.
+- **Safety:** no buys after a 2% daily loss or a 10% drawdown (the drawdown halt lifts itself after a 20-trading-day cooldown, 20 more for each repeat halt before a new equity high, max 60, once SPY is above its 200-day average; then a probation at half risk), and a kill switch you control.
 
 All parameters are in `config.json`. Background research is in [AI_AGENT_TRADING_STRATEGIES.md](AI_AGENT_TRADING_STRATEGIES.md).
 
@@ -57,7 +57,7 @@ All parameters are in `config.json`. Background research is in [AI_AGENT_TRADING
 **Rules**
 - Trade only the `account_number` in `config.json`, and never pick or guess one.
 - The engine (`strategy.py`) decides every trade. You may only veto or shrink a buy.
-- Never clear `kill` or `halted`.
+- Never clear `kill` or `halted` by hand; only the engine's `halt_release` rule or the user lifts a halt.
 - Keep the data private. `.gitignore` covers `config.json`, `state/`, `run/`, `journal/` and `reports/`.
 
 **Layout**

@@ -22,7 +22,7 @@ On the first live run (empty `journal/trades.jsonl`), show the order table and w
 - `get_equity_positions(<account>)`
 - `get_equity_orders(<account>, state="confirmed")` (also `queued`) → open stop orders; map each position to its `stop_price` (null if none)
 - `prev_close_equity`: last row of `journal/equity.csv` (if none, current equity)
-- **Cash flows:** if cash moved by more than fills and stops explain (deposit or withdrawal), don't count it as P&L. Pass `equity` and `cash` without the flow, so the daily-loss check sees the real move. Ask the user to confirm the flow. Once they do, add `date,amount,note` to `journal/flows.csv`, move `state.json` `peak_equity` by the same amount, and log the full account equity in `equity.csv`. `report.py` builds a time-weighted NAV from these files.
+- **Cash flows:** if cash moved by more than fills and stops explain (deposit or withdrawal), don't count it as P&L. Pass `equity` and `cash` without the flow, so the daily-loss check sees the real move. Ask the user to confirm the flow. Once they do, add `date,amount,note` to `journal/flows.csv`, move `state.json` `peak_equity` and `hwm_equity` by the same amount, and log the full account equity in `equity.csv`. `report.py` builds a time-weighted NAV from these files.
 
 ## 2. Universe scan (one call)
 `preview_scan` with filter `{"expression":"symbol","predicate":"PREDICATE_IN_LIST","values":<config universe_indexes>}` (currently `["SP100","NDX"]`; no 200DMA filter, so held names that broke down still show) and columns:
@@ -98,6 +98,6 @@ Steps 1–3 plus the step 6 audit. Execute stop repairs/raises and sells caused 
 Report.
 
 ## Halt / kill switch
-- `halted: true` (set automatically by the drawdown breaker) blocks buys until the user resets it.
+- `halted: true` (set automatically by the drawdown breaker) blocks buys. With `halt_release.enabled` in `config.json` the engine lifts it on its own (rules in the `strategy.py` docstring): after `cooldown_days` trading days × the number of halts since the last equity high (capped at `max_cooldown_days`), and only while SPY is risk-on. It then re-bases `peak_equity` to current equity and runs a probation with half-size risk. Report releases, probation and remaining cooldown from the plan notes. The user can lift a halt early with `python3 <skill>/scripts/strategy.py unhalt`.
 - `kill: true` (set by the user: `python3 <skill>/scripts/strategy.py kill [reason]`) blocks **every** action; the engine also emits no orders. Broker-side stops stay live.
-- Never reset either yourself. For a stop that does not depend on this agent at all, the user can turn on trade approval in Robinhood or revoke the account's agentic access.
+- Never reset either yourself (don't edit `halted`, `halted_on`, `halt_streak` or `probation_until`, and don't run `unhalt`); only the engine's own release rule or the user lifts a halt. For a stop that does not depend on this agent at all, the user can turn on trade approval in Robinhood or revoke the account's agentic access.

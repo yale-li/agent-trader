@@ -17,6 +17,15 @@
   "max_orders_per_run": 10,
   "daily_loss_halt_pct": 0.02,
   "drawdown_kill_pct": 0.1,
+  "halt_release": {
+    "enabled": true,
+    "cooldown_days": 20,
+    "max_cooldown_days": 60,
+    "require_risk_on": true,
+    "probation_days": 20,
+    "probation_risk_mult": 0.5,
+    "max_drawdown_from_hwm": null
+  },
   "exclude": [
     "GOOG"
   ],

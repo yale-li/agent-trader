@@ -34,6 +34,17 @@ Resizing held positions (config "resize", off unless "enabled": true):
         (default hold_rank_buffer). Runs after new entries, so new names get cash first.
   Both skip changes smaller than min_drift x held quantity or min_trade_usd.
 
+Drawdown halt: equity drawdown_kill_pct below peak_equity sets "halted" (no buys; stops and sells continue).
+With config "halt_release" enabled the engine lifts it on its own once ALL of these hold:
+  - enough trading days (Mon-Fri) have passed since halted_on: cooldown_days x halt_streak, capped at
+    max_cooldown_days, where halt_streak counts halts since equity last set a new high (hwm_equity);
+  - SPY regime is risk-on (if require_risk_on);
+  - optional: equity is no more than max_drawdown_from_hwm below hwm_equity (null = no floor; when set,
+    a deeper loss waits for a human).
+On release peak_equity is re-based to current equity and a probation of probation_days trading days
+starts, with risk_per_trade x probation_risk_mult. hwm_equity is never re-based (cash flows move it,
+like peak_equity). A human can lift the halt any time with  python3 strategy.py unhalt  (re-bases the peak).
+
 Kill switch (user only):  python3 strategy.py kill [reason]  /  python3 strategy.py unkill
 While state.json has "kill": true the engine emits no orders at all (not even stop raises).
 
@@ -127,6 +138,50 @@ def size_position(row, equity, cfg, shrink=1.0):
     return qty, round(row["price"] - stop_dist, 2)
 
 
+def weekdays_between(a, b):
+    """Trading days (Mon-Fri, holidays ignored) after date a up to and including date b."""
+    n, d = 0, a
+    while d < b:
+        d = date.fromordinal(d.toordinal() + 1)
+        n += d.weekday() < 5
+    return n
+
+
+def add_weekdays(d, n):
+    while n > 0:
+        d = date.fromordinal(d.toordinal() + 1)
+        n -= d.weekday() < 5
+    return d
+
+
+def in_probation(state, today):
+    until = state.get("probation_until")
+    return bool(until) and today <= date.fromisoformat(until)
+
+
+def cooldown_needed(state, hr):
+    """cooldown_days per consecutive halt since the last high-water mark, capped at max_cooldown_days."""
+    base = hr.get("cooldown_days", 20)
+    return min(base * max(1, state.get("halt_streak", 1)), hr.get("max_cooldown_days", 3 * base))
+
+
+def halt_release(state, equity, risk_on, today, hr):
+    """Decide whether the drawdown halt may lift on its own. Returns (released, note)."""
+    waited = weekdays_between(date.fromisoformat(state["halted_on"]), today)
+    need = cooldown_needed(state, hr)
+    if waited < need:
+        return False, (f"halt release: cooldown {waited}/{need} trading days "
+                       f"(halt #{state.get('halt_streak', 1)} since the last high)")
+    floor, hwm = hr.get("max_drawdown_from_hwm"), state["hwm_equity"]
+    if floor and equity < hwm * (1 - floor):
+        return False, (f"halt release: equity {equity:.2f} is {1 - equity / hwm:.1%} below high-water mark "
+                       f"{hwm:.2f} (floor {floor:.0%}) - human reset required")
+    if hr.get("require_risk_on", True) and not risk_on:
+        return False, "halt release: waiting for SPY regime risk-on"
+    return True, (f"HALT AUTO-RELEASED after {waited} trading days; drawdown baseline reset to "
+                  f"equity {equity:.2f} (high-water mark {hwm:.2f} kept)")
+
+
 def plan(inp, cfg=CONFIG, state=None):
     state = state or load_state()
     today = date.fromisoformat(inp["date"])
@@ -134,14 +189,40 @@ def plan(inp, cfg=CONFIG, state=None):
     notes, orders = [], []
 
     # --- circuit breakers -------------------------------------------------
+    spy = inp["spy"]
+    risk_on = spy["price"] >= spy["sma200"] * (1 - cfg["regime_band"])
+    hr = cfg.get("halt_release", {})
+    if state.get("halted") and not state.get("halted_on"):
+        state["halted_on"] = inp["date"]  # halt from before auto-release existed: the cooldown starts now
+    hwm = state.get("hwm_equity") or state.get("peak_equity") or equity
+    if equity > hwm:
+        state["halt_streak"] = 0  # a new all-time high ends the streak of consecutive halts
+    state["hwm_equity"] = max(hwm, equity)
+    if state.get("halted") and hr.get("enabled"):
+        released, why = halt_release(state, equity, risk_on, today, hr)
+        notes.append(why)
+        if released:
+            state.update(halted=False, halt_reason=None, peak_equity=equity, released_on=inp["date"],
+                         probation_until=add_weekdays(today, hr.get("probation_days", 20)).isoformat(),
+                         auto_releases=state.get("auto_releases", 0) + 1)
+            state.pop("halted_on", None)
     peak = max(state.get("peak_equity") or equity, equity)
     state["peak_equity"] = peak
     drawdown = 1 - equity / peak
-    if drawdown >= cfg["drawdown_kill_pct"]:
+    if drawdown >= cfg["drawdown_kill_pct"] and not state.get("halted"):
         state["halted"] = True
+        state["halted_on"] = inp["date"]
         state["halt_reason"] = f"drawdown {drawdown:.1%} from peak {peak:.2f}"
+        state["halt_streak"] = state.get("halt_streak", 0) + 1
     if state.get("halted"):
-        notes.append(f"HALTED: {state['halt_reason']}. No new buys; existing stops stay. Human must reset state/state.json.")
+        who = (f"Auto-release after {cooldown_needed(state, hr)} trading days if the rules allow."
+               if hr.get("enabled") else "Human must reset it (strategy.py unhalt).")
+        notes.append(f"HALTED since {state.get('halted_on')}: {state['halt_reason']}. No new buys; existing stops stay. {who}")
+    elif in_probation(state, today):
+        mult = hr.get("probation_risk_mult", 0.5)
+        cfg = {**cfg, "risk_per_trade": cfg["risk_per_trade"] * mult}
+        notes.append(f"PROBATION until {state['probation_until']} (auto-released {state.get('released_on')}): "
+                     f"risk per trade x{mult}.")
     daily_loss = 1 - equity / inp["prev_close_equity"] if inp.get("prev_close_equity") else 0
     no_buys = state.get("halted", False)
     if daily_loss >= cfg["daily_loss_halt_pct"]:
@@ -152,8 +233,6 @@ def plan(inp, cfg=CONFIG, state=None):
         notes.append(f"EARNINGS DATA MISSING: {earnings_missing}. No stock buys/adds (crypto sleeve unaffected).")
 
     # --- regime -----------------------------------------------------------
-    spy = inp["spy"]
-    risk_on = spy["price"] >= spy["sma200"] * (1 - cfg["regime_band"])
     notes.append(f"Regime: SPY {spy['price']:.2f} vs SMA200 {spy['sma200']:.2f} -> {'RISK-ON' if risk_on else 'RISK-OFF'}")
 
     crypto_syms = set(cfg["crypto"]["symbols"])
@@ -422,8 +501,16 @@ def main():
         save_state(state)
         print(json.dumps(state, indent=2))
         return
+    if len(sys.argv) == 2 and sys.argv[1] == "unhalt":
+        state = load_state()
+        state.update(halted=False, halt_reason=None, peak_equity=None)  # next run re-bases the peak
+        state.pop("halted_on", None)
+        save_state(state)
+        print(json.dumps(state, indent=2))
+        return
     if len(sys.argv) != 3 or sys.argv[1] not in ("plan", "check"):
-        sys.exit("usage: strategy.py plan|check <input.json>  |  strategy.py kill [reason]  |  strategy.py unkill")
+        sys.exit("usage: strategy.py plan|check <input.json>  |  strategy.py kill [reason]  |  strategy.py unkill"
+                 "  |  strategy.py unhalt")
     inp_path = ROOT / sys.argv[2]  # an absolute argv path wins over ROOT
     inp = json.loads(inp_path.read_text())
     if sys.argv[1] == "check":
