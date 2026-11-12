@@ -61,16 +61,22 @@ For each BUY or ADD: search the web for news from the last ~7 days, using whatev
 If anything is vetoed/shrunk: add `vetoes`/`shrinks` to input.json and re-run the engine. Record the reason.
 
 ## 5. Show the plan, then execute
-Show the order table (action, symbol, qty, est. cost, stop, reason) plus notes, then execute in this order:
-1. **SELL**: cancel that symbol's stop (`cancel_equity_order`), then `review_equity_order` → `place_equity_order` market sell, full quantity, regular_hours.
+Show the order table (action, symbol, qty, est. cost, stop, reason) plus notes, then execute in this order.
+
+**Never leave a held position without a stop.** A stop is cancelled only as the step right before an order that replaces it, and only once you know you will place that order:
+- Before cancelling anything, decide whether you will place this run's orders. If you won't or can't (your instructions or permissions don't allow it, a tool is missing, the market is closing), cancel nothing: leave every existing stop in place and report the orders as not executed.
+- Run `review_equity_order` for the replacing order **before** cancelling the stop. If the review returns alerts, stop there with the old stop still live.
+- If the replacing order fails, is rejected, or doesn't fill (a market sell that hasn't filled within ~2 min), re-place the old stop at once (`stop_market` gtc sell, the shares still held, the old stop_price) and report it.
+
+1. **SELL**: `review_equity_order` market sell (full quantity, regular_hours) → if clean, cancel that symbol's stop (`cancel_equity_order`) → immediately `place_equity_order`. Confirm the fill; if it didn't fill, re-place the old stop as above.
    **TRIM** (partial sell): same, but sell only the order's `quantity`; once filled, place a `stop_market` gtc sell for `remaining` shares at the order's stop_price (skip if `remaining` is 0).
-2. **RAISE_STOP / SET_STOP**: cancel the old stop (if any), place `stop_market` sell, `time_in_force="gtc"`, at the new stop_price.
+2. **RAISE_STOP / SET_STOP**: `review_equity_order` the new `stop_market` sell (gtc, new stop_price) → if clean, cancel the old stop (if any) → immediately place the new stop. If placing fails, re-place the old stop.
 3. **BUY**: `get_equity_quotes` → `review_equity_order` limit buy at the current ask (gfd, whole shares) → `place_equity_order` with a fresh UUID `ref_id`. Confirm the fill with `get_equity_orders(order_id=…)`. **Immediately** place the protective `stop_market` gtc sell for the filled quantity at the plan's stop_price (if the fill differs from ref_price by >1%, use fill_price − stop_atr_mult×ATR). If not filled within ~2 min, cancel and skip.
 4. **ADD** (top up a held position; after all BUYs): limit buy `quantity` exactly like a BUY. Once filled, cancel the symbol's current stop and place one `stop_market` gtc sell for the **whole position** (held + filled) at the order's stop_price — never lower it, even if the fill is off ref_price. Partial or no fill: cancel the rest and re-place the stop for whatever is now held.
-If a review returns alerts, stop and report — do not force.
+If a review returns alerts, stop and report — do not force (and never with a stop already cancelled: see the rule above).
 
 ## 6. Audit and log
-- Re-fetch positions + open orders, write `run/<date>/post.json` (`equity`, `positions` with stop_price, `universe`), run `python3 <skill>/scripts/strategy.py check run/<date>/post.json`. Any problem (especially NO STOP) → fix immediately or tell the user.
+- Re-fetch positions + open orders, write `run/<date>/post.json` (`equity`, `positions` with stop_price, `universe`), run `python3 <skill>/scripts/strategy.py check run/<date>/post.json`. Any problem (especially NO STOP) → fix immediately or tell the user. If you can't place the repair stop yourself, say so as the first line of the summary, with the exact order to place (symbol, shares, stop_price, gtc), and send a push notification if your agent can.
 - Append one JSON line per executed order to `journal/trades.jsonl`: `{ts, action, symbol, qty, fill_price, stop_price, order_id, stop_order_id, reason, overlay_note}`.
 - Append `date,equity,spy` (SPY last price) to `journal/equity.csv` — one row per date; replace the row if today's already exists.
 - Run `python3 <skill>/scripts/report.py` → `reports/report-<date>.html` and `reports/latest.html`; include the path in the summary.
