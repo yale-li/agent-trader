@@ -22,7 +22,7 @@ On the first live run (empty `journal/trades.jsonl`), show the order table and w
 - `get_equity_positions(<account>)`
 - `get_equity_orders(<account>, state="confirmed")` (also `queued`) → open stop orders; map each position to its `stop_price` (null if none)
 - `prev_close_equity`: last row of `journal/equity.csv` (if none, current equity)
-- **Cash flows:** if cash moved by more than fills and stops explain (deposit or withdrawal), don't count it as P&L. Pass `equity` and `cash` without the flow, so the daily-loss check sees the real move. Ask the user to confirm the flow. Once they do, add `date,amount,note` to `journal/flows.csv`, move `state.json` `peak_equity` and `hwm_equity` by the same amount, and log the full account equity in `equity.csv`. `report.py` builds a time-weighted NAV from these files.
+- **Cash flows:** if cash moved by more than fills and stops explain (deposit or withdrawal), don't count it as P&L. Pass `equity` and `cash` without the flow, so the daily-loss check sees the real move. Ask the user to confirm the flow. Once they do, add `date,amount,note` to `journal/flows.csv`, move `state.json` `peak_equity` and `hwm_equity` by the same amount, and log the full account equity in `equity.csv`. `report.py` reports money-weighted returns from these files (P&L ÷ net invested, vs a SPY shadow account with the same flows, matching the broker app) and uses a time-weighted NAV only for max drawdown.
 
 ## 2. Universe scan (one call)
 `preview_scan` with filter `{"expression":"symbol","predicate":"PREDICATE_IN_LIST","values":<config universe_indexes>}` (currently `["SP100","NDX"]`; no 200DMA filter, so held names that broke down still show) and columns:

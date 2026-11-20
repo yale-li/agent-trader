@@ -33,13 +33,28 @@ def load_equity():
     for r in csv.DictReader(p.open()):
         rows.append({"date": r["date"], "equity": float(r["equity"]),
                      "spy": float(r["spy"]) if r.get("spy") else None})
-    # time-weighted NAV: a day's return excludes that day's deposits/withdrawals
+    # Headline returns are money-weighted, matching the broker app: P&L / net invested, where
+    # net invested = starting equity + deposits - withdrawals. The SPY benchmark is a shadow
+    # account that puts the same flows into SPY on the same days.
+    # The time-weighted NAV (a day's return excludes that day's flows) is kept for max drawdown.
     flows = load_flows()
-    nav = 1.0
+    nav, invested, spy_sh = 1.0, None, None
     for i, r in enumerate(rows):
+        f = flows.get(r["date"], 0.0)
         if i:
-            nav *= (r["equity"] - flows.get(r["date"], 0.0)) / rows[i - 1]["equity"]
+            nav *= (r["equity"] - f) / rows[i - 1]["equity"]
+            invested += f
+            if spy_sh is not None and r["spy"]:
+                spy_sh += f / r["spy"]
+        else:
+            invested = r["equity"]
+        if spy_sh is None and r["spy"]:
+            spy_sh = invested / r["spy"]  # SPY row missing at the start: shadow starts here
         r["nav"] = nav
+        r["invested"] = invested
+        r["pnl"] = r["equity"] - invested
+        r["ret"] = r["pnl"] / invested if invested else 0.0
+        r["spy_ret"] = (spy_sh * r["spy"] / invested - 1) if spy_sh is not None and r["spy"] and invested else None
     return rows
 
 
@@ -184,16 +199,15 @@ def svg_curve(eq):
     w, h, pad = 720, 240, 36
     if len(eq) < 2:
         return '<p class="muted">净值数据点不足（至少需要两天），暂无曲线。</p>'
-    base_s = next((r["spy"] for r in eq if r["spy"]), None)
-    series = [("策略", [r["nav"] - 1 for r in eq], "var(--accent)")]
-    if base_s:
-        series.append(("SPY", [(r["spy"] / base_s - 1) if r["spy"] else None for r in eq], "var(--muted)"))
+    series = [("策略", [r["ret"] for r in eq], "var(--accent)")]
+    if any(r["spy_ret"] is not None for r in eq):
+        series.append(("SPY（同样出入金）", [r["spy_ret"] for r in eq], "var(--muted)"))
     vals = [v for _, s, _ in series for v in s if v is not None]
     lo, hi = min(vals + [0]), max(vals + [0])
     span = (hi - lo) or 0.01
     x = lambda i: pad + i * (w - 2 * pad) / (len(eq) - 1)
     y = lambda v: h - pad - (v - lo) / span * (h - 2 * pad)
-    parts = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="净值曲线">',
+    parts = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="收益曲线">',
              f'<line x1="{pad}" x2="{w - pad}" y1="{y(0):.1f}" y2="{y(0):.1f}" class="axis"/>',
              f'<text x="4" y="{y(hi) + 4:.1f}" class="tick">{hi:+.1%}</text>',
              f'<text x="4" y="{y(lo) + 4:.1f}" class="tick">{lo:+.1%}</text>',
@@ -231,10 +245,10 @@ def build():
     today = datetime.now().strftime("%Y-%m-%d")
 
     equity = snap["equity"] if snap else (eq[-1]["equity"] if eq else 0)
-    total_ret = eq[-1]["nav"] - 1 if eq else 0
-    spy_ret = None
-    if eq and eq[0]["spy"] and eq[-1]["spy"]:
-        spy_ret = eq[-1]["spy"] / eq[0]["spy"] - 1
+    total_ret = eq[-1]["ret"] if eq else 0
+    total_pnl = eq[-1]["pnl"] if eq else 0
+    invested_total = eq[-1]["invested"] if eq else 0
+    spy_ret = eq[-1]["spy_ret"] if eq else None
     mdd = max_drawdown([r["nav"] for r in eq]) if eq else 0
     realized, realized_by = realized_pnl(trades)
 
@@ -319,11 +333,12 @@ def build():
                    f'引擎不会发出任何订单，券商端已挂的止损单不受影响。解除：python3 strategy.py unkill</div>')
     cards = [
         ("账户净值", fmt_money(equity), ""),
-        ("累计收益", f"{total_ret:+.2%}", pct_cls(total_ret)),
-        ("同期 SPY", f"{spy_ret:+.2%}" if spy_ret is not None else "-", pct_cls(spy_ret or 0)),
+        ("净投入", fmt_money(invested_total), ""),
+        ("累计盈亏", f"{fmt_money(total_pnl)} ({total_ret:+.2%})", pct_cls(total_ret)),
+        ("同期 SPY（同样出入金）", f"{spy_ret:+.2%}" if spy_ret is not None else "-", pct_cls(spy_ret or 0)),
         ("超额收益", f"{total_ret - spy_ret:+.2%}" if spy_ret is not None else "-",
          pct_cls(total_ret - (spy_ret or 0))),
-        ("最大回撤", f"{mdd:.2%}", "neg" if mdd > 0 else ""),
+        ("最大回撤（时间加权）", f"{mdd:.2%}", "neg" if mdd > 0 else ""),
         ("已实现盈亏", fmt_money(realized), pct_cls(realized)),
         ("未实现盈亏", fmt_money(unreal), pct_cls(unreal)),
         ("现金占比", f"{cash / equity:.0%}" if equity else "-", ""),
@@ -361,7 +376,7 @@ svg{{width:100%;height:auto}}.axis{{stroke:var(--line)}}.tick{{fill:var(--muted)
 <div class="sub">MCP 账户 ••••{str(cfg['account_number'])[-4:]} · 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 最近运行 {run_date or '无'}</div>
 {status}
 <div class="cards">{cards_html}</div>
-<h2>净值曲线（相对起点）</h2><div class="panel">{svg_curve(eq)}</div>
+<h2>收益曲线（累计盈亏 ÷ 净投入）</h2><div class="panel">{svg_curve(eq)}</div>
 <h2>当前持仓</h2>{table(["代码", "股数", "成本", "现价", "市值", "占比", "浮动盈亏", "止损价", "距止损"], hold_rows)}
 <h2>最近一次运行</h2><div class="panel">{plan_html}</div>
 <h2>交易记录（最近 30 笔）</h2>{table(["时间", "操作", "代码", "数量", "成交价", "止损价", "原因", "新闻把关"], trade_rows)}
