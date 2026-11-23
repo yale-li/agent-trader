@@ -233,7 +233,7 @@ def plan(inp, cfg=CONFIG, state=None):
         notes.append(f"EARNINGS DATA MISSING: {earnings_missing}. No stock buys/adds (crypto sleeve unaffected).")
 
     # --- regime -----------------------------------------------------------
-    notes.append(f"Regime: SPY {spy['price']:.2f} vs SMA200 {spy['sma200']:.2f} -> {'RISK-ON' if risk_on else 'RISK-OFF'}")
+    notes.append(f"Regime: SPY {spy['price']:.2f} vs SMA200 {spy['sma200']:.2f} -> {'BULLISH (buys allowed)' if risk_on else 'BEARISH (no buys, sell holdings)'}")
 
     crypto_syms = set(cfg["crypto"]["symbols"])
     by_sym = {r["symbol"]: r for r in inp["universe"]}
